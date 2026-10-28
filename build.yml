@@ -1,0 +1,303 @@
+name: Build APK
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.9
+      - name: Create project files
+        run: |
+          mkdir -p app/src/main/java/com/minehub/launcher
+          cat > settings.gradle <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "MineHub"
+          include ':app'
+          EOF
+          cat > build.gradle <<'EOF'
+          plugins { id 'com.android.application' version '8.5.2' apply false }
+          EOF
+          cat > app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.minehub.launcher'
+              compileSdk 34
+              defaultConfig {
+                  applicationId 'com.minehub.launcher'
+                  minSdk 24
+                  targetSdk 34
+                  versionCode 1
+                  versionName '1.0'
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_17
+                  targetCompatibility JavaVersion.VERSION_17
+              }
+          }
+          tasks.withType(JavaCompile) { options.encoding = 'UTF-8' }
+          EOF
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.INTERNET"/>
+              <queries>
+                  <package android:name="com.mojang.minecraftpe"/>
+              </queries>
+              <application
+                  android:label="MineHub"
+                  android:theme="@android:style/Theme.Material.NoActionBar">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+          cat > app/src/main/java/com/minehub/launcher/MainActivity.java <<'EOF'
+          package com.minehub.launcher;
+
+          import android.app.Activity;
+          import android.app.AlertDialog;
+          import android.content.Intent;
+          import android.content.pm.PackageManager;
+          import android.graphics.Typeface;
+          import android.graphics.drawable.GradientDrawable;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.provider.Settings;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.webkit.WebView;
+          import android.webkit.WebViewClient;
+          import android.widget.Button;
+          import android.widget.FrameLayout;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          public class MainActivity extends Activity {
+              static final String MC = "com.mojang.minecraftpe";
+              static final int BG = 0xFF14142B;
+              static final int CARD = 0xFF202044;
+              static final int ACC = 0xFF5B5BF0;
+              static final int TXT = 0xFFFFFFFF;
+              static final int SUB = 0xFFA0A0C8;
+
+              FrameLayout content;
+              TextView[] tabs = new TextView[5];
+              boolean waitInstall = false;
+              int tab = 0;
+
+              @Override
+              protected void onCreate(Bundle b) {
+                  super.onCreate(b);
+                  getWindow().setStatusBarColor(BG);
+                  getWindow().setNavigationBarColor(CARD);
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setBackgroundColor(BG);
+                  content = new FrameLayout(this);
+                  root.addView(content, new LinearLayout.LayoutParams(-1, 0, 1f));
+                  LinearLayout bar = new LinearLayout(this);
+                  bar.setBackgroundColor(CARD);
+                  String[] names = {"Главная", "Моды", "Скины", "Новости", "Ещё"};
+                  for (int i = 0; i < names.length; i++) {
+                      final int t = i;
+                      TextView v = new TextView(this);
+                      v.setText(names[i]);
+                      v.setTextSize(13);
+                      v.setGravity(Gravity.CENTER);
+                      v.setPadding(0, dp(14), 0, dp(14));
+                      v.setOnClickListener(x -> show(t));
+                      tabs[i] = v;
+                      bar.addView(v, new LinearLayout.LayoutParams(0, -2, 1f));
+                  }
+                  root.addView(bar, new LinearLayout.LayoutParams(-1, -2));
+                  setContentView(root);
+                  show(0);
+              }
+
+              @Override
+              protected void onResume() {
+                  super.onResume();
+                  if (content == null) return;
+                  if (waitInstall && installed()) {
+                      waitInstall = false;
+                      new AlertDialog.Builder(this)
+                          .setTitle("Minecraft установлен")
+                          .setPositiveButton("Играть", (d, w) -> play())
+                          .setNegativeButton("Назад", null)
+                          .show();
+                  }
+                  if (tab == 0) show(0);
+              }
+
+              boolean installed() {
+                  try {
+                      getPackageManager().getPackageInfo(MC, 0);
+                      return true;
+                  } catch (PackageManager.NameNotFoundException e) {
+                      return false;
+                  }
+              }
+
+              void install() {
+                  waitInstall = !installed();
+                  try {
+                      startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("market://details?id=" + MC)));
+                  } catch (Exception e) {
+                      startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse("https://play.google.com/store/apps/details?id=" + MC)));
+                  }
+              }
+
+              void play() {
+                  Intent i = getPackageManager().getLaunchIntentForPackage(MC);
+                  if (i != null) startActivity(i);
+              }
+
+              void show(int t) {
+                  tab = t;
+                  for (int i = 0; i < tabs.length; i++) tabs[i].setTextColor(i == t ? ACC : SUB);
+                  content.removeAllViews();
+                  if (t == 3) {
+                      WebView w = new WebView(this);
+                      w.getSettings().setJavaScriptEnabled(true);
+                      w.setWebViewClient(new WebViewClient());
+                      w.loadUrl("https://www.minecraft.net/ru-ru/articles");
+                      content.addView(w);
+                      return;
+                  }
+                  LinearLayout col = new LinearLayout(this);
+                  col.setOrientation(LinearLayout.VERTICAL);
+                  col.setPadding(dp(20), dp(24), dp(20), dp(20));
+                  ScrollView sv = new ScrollView(this);
+                  sv.addView(col);
+                  content.addView(sv);
+                  if (t == 0) home(col);
+                  else if (t == 1) files(col, "Моды и карты", "Выбери файл .mcaddon, .mcpack или .mcworld, и он откроется в Minecraft.");
+                  else if (t == 2) files(col, "Скины", "Выбери скин в формате .mcpack, и он откроется в Minecraft.");
+                  else more(col);
+              }
+
+              void home(LinearLayout c) {
+                  c.addView(text("Добро пожаловать!", 26, TXT, true));
+                  c.addView(text("Один лаунчер для Minecraft Bedrock", 14, SUB, false));
+                  LinearLayout card = card();
+                  card.addView(text("Bedrock Edition", 22, TXT, true));
+                  boolean ok = installed();
+                  card.addView(text(ok ? "✓ Minecraft установлен" : "Minecraft пока не установлен", 14, SUB, false));
+                  card.addView(button(ok ? "Играть" : "Установить", v -> {
+                      if (installed()) play(); else install();
+                  }));
+                  c.addView(card);
+              }
+
+              void files(LinearLayout c, String title, String desc) {
+                  c.addView(text(title, 26, TXT, true));
+                  c.addView(text(desc, 14, SUB, false));
+                  LinearLayout card = card();
+                  card.addView(button("Выбрать файл", v -> {
+                      Intent i = new Intent(Intent.ACTION_GET_CONTENT);
+                      i.setType("*/*");
+                      i.addCategory(Intent.CATEGORY_OPENABLE);
+                      startActivityForResult(i, 1);
+                  }));
+                  c.addView(card);
+              }
+
+              void more(LinearLayout c) {
+                  c.addView(text("Настройки", 26, TXT, true));
+                  LinearLayout card = card();
+                  card.addView(button("Обновить Minecraft (Google Play)", v -> install()));
+                  card.addView(button("Настройки приложения Minecraft", v -> startActivity(
+                      new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + MC)))));
+                  card.addView(text("MineHub 1.0. Неофициальный лаунчер, не связан с Mojang и Microsoft.", 12, SUB, false));
+                  c.addView(card);
+              }
+
+              @Override
+              protected void onActivityResult(int req, int res, Intent data) {
+                  super.onActivityResult(req, res, data);
+                  if (req != 1 || res != RESULT_OK || data == null || data.getData() == null) return;
+                  if (!installed()) {
+                      Toast.makeText(this, "Сначала установи Minecraft", Toast.LENGTH_LONG).show();
+                      return;
+                  }
+                  Intent i = new Intent(Intent.ACTION_VIEW);
+                  i.setDataAndType(data.getData(), "application/octet-stream");
+                  i.setPackage(MC);
+                  i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                  try {
+                      startActivity(i);
+                  } catch (Exception e) {
+                      Toast.makeText(this, "Minecraft не смог открыть этот файл", Toast.LENGTH_LONG).show();
+                  }
+              }
+
+              int dp(int v) {
+                  return (int) (v * getResources().getDisplayMetrics().density);
+              }
+
+              TextView text(String s, int sp, int color, boolean bold) {
+                  TextView t = new TextView(this);
+                  t.setText(s);
+                  t.setTextSize(sp);
+                  t.setTextColor(color);
+                  if (bold) t.setTypeface(null, Typeface.BOLD);
+                  t.setPadding(0, dp(6), 0, dp(6));
+                  return t;
+              }
+
+              LinearLayout card() {
+                  LinearLayout l = new LinearLayout(this);
+                  l.setOrientation(LinearLayout.VERTICAL);
+                  l.setPadding(dp(18), dp(18), dp(18), dp(18));
+                  GradientDrawable g = new GradientDrawable();
+                  g.setColor(CARD);
+                  g.setCornerRadius(dp(16));
+                  l.setBackground(g);
+                  LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2);
+                  p.topMargin = dp(18);
+                  l.setLayoutParams(p);
+                  return l;
+              }
+
+              Button button(String s, View.OnClickListener f) {
+                  Button b = new Button(this);
+                  b.setText(s);
+                  b.setTextColor(TXT);
+                  b.setAllCaps(false);
+                  GradientDrawable g = new GradientDrawable();
+                  g.setColor(ACC);
+                  g.setCornerRadius(dp(12));
+                  b.setBackground(g);
+                  b.setOnClickListener(f);
+                  LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(52));
+                  p.topMargin = dp(12);
+                  b.setLayoutParams(p);
+                  return b;
+              }
+          }
+          EOF
+      - name: Build
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: MineHub-APK
+          path: app/build/outputs/apk/debug/*.apk
